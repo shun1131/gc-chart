@@ -11,6 +11,7 @@
     --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
     --c-btc-rate: #2E93fA; --c-usd-rate: #F4B400; --c-btcusd: #E46A7E; --c-ethusd: #6AA84F;
     --c-rut: #22D3EE; --c-sp600: #A78BFA; --c-fng: #F97316;
+    --c-sig-up: #3FB950; --c-sig-down: #FF5C5C;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -23,6 +24,8 @@
     border-radius: 6px; padding: 6px 10px; font-size: 14px; color-scheme: dark;
   }
   button { cursor: pointer; } button:hover { border-color: var(--muted); }
+  .toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text); }
+  .sig-up { color: var(--c-sig-up); } .sig-down { color: var(--c-sig-down); }
   #chart { padding: 0 8px; }
   footer { padding: 4px 20px 16px; font-size: 12px; color: var(--muted); line-height: 1.7; }
   #status { color: var(--muted); }
@@ -44,6 +47,7 @@
     <span>期間: From</span><input type="date" id="from">
     <span>To</span><input type="date" id="to">
     <button id="apply">更新</button>
+    <label class="toggle"><input type="checkbox" id="showSignals" checked> シグナル</label>
   </div>
 </header>
 <div id="chart"></div>
@@ -51,6 +55,8 @@
   <div id="status">読み込み中…</div>
   <div>rate USD = 対象銘柄のうちドル建てで「短期SMA &gt; 長期SMA」の割合 / rate BTC = 同じ判定をBTC建て価格で行った割合。
     対象 = Binance現物USDTペアの出来高上位(ステーブル等除く)。凡例クリックで系列の表示を切り替え。</div>
+  <div><span class="sig-up">▲ 底反転</span> = 直近15日に rate USD が 0.1 を割ったあと 0.2 を上抜けた日 /
+    <span class="sig-down">▼ 天井崩れ</span> = 直近15日に 0.9 を超えたあと 0.8 を下抜けた日(選択中の短期・長期の組み合わせで判定)</div>
 </footer>
 <script>
 (async () => {
@@ -116,6 +122,48 @@
     }));
   }
 
+  // 反転シグナルの判定条件(rate USD に対して適用)
+  const SIGNAL = { lookback: 15, low: 0.1, upTrigger: 0.2, high: 0.9, downTrigger: 0.8 };
+
+  function detectSignals(u) {
+    const out = [];
+    for (let i = 1; i < u.length; i++) {
+      if (u[i] == null || u[i - 1] == null) continue;
+      const recent = u.slice(Math.max(0, i - SIGNAL.lookback), i).filter(v => v != null);
+      if (!recent.length) continue;
+      if (u[i - 1] < SIGNAL.upTrigger && u[i] >= SIGNAL.upTrigger && Math.min(...recent) < SIGNAL.low) {
+        out.push({ i, dir: 'up' });
+      } else if (u[i - 1] > SIGNAL.downTrigger && u[i] <= SIGNAL.downTrigger && Math.max(...recent) > SIGNAL.high) {
+        out.push({ i, dir: 'down' });
+      }
+    }
+    return out;
+  }
+
+  const BANDS = [
+    { y: 0.9, y2: 1.0, yAxisIndex: 0, fillColor: '#E46A7E', opacity: 0.08, borderColor: 'transparent' },
+    { y: 0.0, y2: 0.1, yAxisIndex: 0, fillColor: '#E46A7E', opacity: 0.08, borderColor: 'transparent' },
+  ];
+
+  function buildAnnotations(key, i0, i1) {
+    const points = !$('showSignals').checked ? [] :
+      detectSignals(data.rates[key].usd)
+        .filter(s => s.i >= i0 && s.i <= i1)
+        .map(({ i, dir }) => {
+          const up = dir === 'up';
+          const color = c(up ? '--c-sig-up' : '--c-sig-down');
+          return {
+            x: ts[i], y: data.rates[key].usd[i], yAxisIndex: 0,
+            marker: { size: 5, fillColor: color, strokeColor: '#ffffff', strokeWidth: 1 },
+            label: {
+              text: up ? '▲' : '▼', borderWidth: 0, offsetY: up ? 38 : 0,
+              style: { background: 'transparent', color, fontSize: '16px', padding: { left: 0, right: 0, top: 0, bottom: 0 } },
+            },
+          };
+        });
+    return { yaxis: BANDS, points };
+  }
+
   function currentRange() {
     const from = $('from').value ? Date.parse($('from').value + 'T00:00:00Z') : null;
     const to = $('to').value ? Date.parse($('to').value + 'T00:00:00Z') : null;
@@ -144,12 +192,7 @@
     },
     yaxis,
     grid: { borderColor: '#2a2f36', xaxis: { lines: { show: false } } },
-    annotations: {
-      yaxis: [
-        { y: 0.9, y2: 1.0, yAxisIndex: 0, fillColor: '#E46A7E', opacity: 0.08, borderColor: 'transparent' },
-        { y: 0.0, y2: 0.1, yAxisIndex: 0, fillColor: '#E46A7E', opacity: 0.08, borderColor: 'transparent' },
-      ],
-    },
+    annotations: buildAnnotations('7-25', i0, i1),
     legend: { position: 'bottom', horizontalAlign: 'center', labels: { colors: c('--text') } },
     tooltip: {
       shared: true, theme: 'dark', x: { format: 'yyyy/MM/dd' },
@@ -166,9 +209,11 @@
     const [a, b] = currentRange();
     const hidden = SERIES.filter(s => chart.w.globals.collapsedSeriesIndices
       .includes(SERIES.indexOf(s))).map(s => s.name);
-    chart.updateSeries(buildSeries($('pair').value, a, b), false);
+    const key = $('pair').value;
+    chart.updateOptions({ series: buildSeries(key, a, b), annotations: buildAnnotations(key, a, b) }, false, false);
     hidden.forEach(n => chart.hideSeries(n));
   }
+  $('showSignals').addEventListener('change', refresh);
   $('apply').addEventListener('click', refresh);
   $('pair').addEventListener('change', refresh);
   $('span').addEventListener('change', () => { $('from').value = ''; $('to').value = ''; refresh(); });
