@@ -32,3 +32,25 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  # 公開リポジトリは60日間コミットがないと定期実行が止まるため、
+  # 最後のコミットから45日たったら空コミットを積んで止まらないようにする
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Empty commit if idle for 45 days
+        run: |
+          last=$(git log -1 --format=%ct)
+          days=$(( ( $(date +%s) - last ) / 86400 ))
+          echo "days since last commit: $days"
+          if [ "$days" -ge 45 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive: 定期実行の自動停止を防ぐ空コミット"
+            git push
+          fi

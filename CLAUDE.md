@@ -7,6 +7,7 @@
 仮想通貨の「GC比率」と BTC/ETH 価格などを重ねて見る個人用チャート。利用者は旦那1人。
 - 公開: GitHub Pages(public repo shun1131/gc-chart。noindex 指定、URLを知っている人だけが見る想定)
 - 更新: GitHub Actions `daily.yml` が毎日 09:30 JST にデータを作り直して Pages へデプロイ
+- 60日無活動で定期実行が止まる対策: 同ワークフローの keepalive ジョブが、最終コミットから45日たったら空コミットを push する
 
 ## 指標の定義
 - **rate USD**: 対象銘柄のうち USDT建て終値で「短期SMA > 長期SMA」の銘柄の割合
